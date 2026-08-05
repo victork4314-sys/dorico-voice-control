@@ -25,11 +25,16 @@ struct CalibrationView: View {
             ProgressView(value: Double(model.preferences.calibration.completedPromptCount), total: Double(DoricoVoiceLanguage.calibrationPrompts.count))
 
             if model.preferences.calibration.isComplete {
-                ContentUnavailableView(
-                    "Voice setup complete",
-                    systemImage: "checkmark.circle.fill",
-                    description: Text("\(model.preferences.calibration.learnedCorrectionCount) reusable correction\(model.preferences.calibration.learnedCorrectionCount == 1 ? "" : "s") saved.")
-                )
+                VStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 46))
+                        .foregroundStyle(.green)
+                    Text("Voice setup complete")
+                        .font(.title2.bold())
+                    Text("\(model.preferences.calibration.learnedCorrectionCount) reusable correction\(model.preferences.calibration.learnedCorrectionCount == 1 ? "" : "s") saved.")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 170)
                 HStack {
                     Button("Reset setup", role: .destructive) { model.resetCalibration() }
                     Spacer()
