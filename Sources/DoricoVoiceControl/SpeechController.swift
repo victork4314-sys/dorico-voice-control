@@ -4,9 +4,31 @@
 import Foundation
 import DoricoVoiceCore
 
-private final class SpeechRequestBox: @unchecked Sendable {
-    let request: SFSpeechAudioBufferRecognitionRequest
-    init(_ request: SFSpeechAudioBufferRecognitionRequest) { self.request = request }
+/// Serializes audio-buffer delivery with shutdown. The audio tap runs off the
+/// main thread, so teardown must wait for any in-flight append before calling
+/// `endAudio()` on the recognition request.
+private final class SpeechAudioRequestGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+
+    init(request: SFSpeechAudioBufferRecognitionRequest) {
+        self.request = request
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+        request?.append(buffer)
+    }
+
+    /// Prevents every future append and waits for an in-flight append to finish.
+    func detachRequest() -> SFSpeechAudioBufferRecognitionRequest? {
+        lock.lock()
+        defer { lock.unlock() }
+        let detached = request
+        request = nil
+        return detached
+    }
 }
 
 @MainActor
@@ -34,10 +56,12 @@ final class SpeechController {
     var onFailure: (@MainActor (String) -> Void)?
     var onListeningChanged: (@MainActor (Bool) -> Void)?
     var onAudioFormatChanged: (@MainActor (String) -> Void)?
+    var onLifecycleEvent: (@MainActor (String) -> Void)?
 
     private var audioEngine: AVAudioEngine?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var requestGate: SpeechAudioRequestGate?
     private var inputTapInstalled = false
     private var silenceTask: Task<Void, Never>?
     private var sessionID = UUID()
@@ -54,20 +78,25 @@ final class SpeechController {
     }
 
     func requestRequiredPermissions() async throws {
+        onLifecycleEvent?("Checking Speech Recognition permission")
         let speech = await requestSpeechPermissionIfNeeded()
         guard speech == .authorized else { throw ControllerError.speechPermissionDenied }
+
+        onLifecycleEvent?("Checking Microphone permission")
         let microphone = await requestMicrophonePermissionIfNeeded()
         guard microphone else { throw ControllerError.microphonePermissionDenied }
+        onLifecycleEvent?("Required permissions are granted")
     }
 
     func start(localeIdentifier: String, contextualStrings: [String]) async throws {
-        stop()
+        stop(reason: "Preparing a new listening session")
         try await requestRequiredPermissions()
 
         let identifier = Locale(identifier: localeIdentifier)
         guard let recognizer = SFSpeechRecognizer(locale: identifier), recognizer.isAvailable else {
             throw ControllerError.recognizerUnavailable
         }
+        onLifecycleEvent?("Speech recognizer is available for \(localeIdentifier)")
 
         let engine = AVAudioEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -77,9 +106,9 @@ final class SpeechController {
             primary: contextualStrings,
             secondary: DoricoVoiceLanguage.speechHints
         )
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
+        // Do not force the on-device recognizer. macOS may choose it when suitable,
+        // but requiring it has produced unstable startup behavior on some machines.
+        request.requiresOnDeviceRecognition = false
 
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
@@ -87,15 +116,19 @@ final class SpeechController {
         guard VoiceSafetyPolicy.isValidAudioFormat(sampleRate: format.sampleRate, channelCount: channelCount) else {
             throw ControllerError.invalidInputFormat(sampleRate: format.sampleRate, channels: channelCount)
         }
+        onLifecycleEvent?("Validated microphone format: \(Int(format.sampleRate)) Hz, \(channelCount) channel\(channelCount == 1 ? "" : "s")")
 
         let newSessionID = UUID()
         sessionID = newSessionID
         latestPartial = ""
-        let requestBox = SpeechRequestBox(request)
+
+        let gate = SpeechAudioRequestGate(request: request)
+        requestGate = gate
         inputNode.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
-            requestBox.request.append(buffer)
+            gate.append(buffer)
         }
         inputTapInstalled = true
+        onLifecycleEvent?("Microphone tap installed")
 
         recognitionRequest = request
         audioEngine = engine
@@ -109,43 +142,66 @@ final class SpeechController {
                     self.receive(transcript: transcript, isFinal: isFinal, sessionID: newSessionID)
                 }
                 if let errorText, !isFinal {
+                    self.onLifecycleEvent?("Speech recognizer reported: \(errorText)")
                     self.finishWithFailure(errorText, sessionID: newSessionID)
                 }
             }
         }
+        onLifecycleEvent?("Recognition task created")
 
         engine.prepare()
         do {
             try engine.start()
         } catch {
-            stop()
+            stop(reason: "Audio engine failed to start")
             throw ControllerError.audioStartFailed(error.localizedDescription)
         }
+
         onAudioFormatChanged?("\(Int(format.sampleRate)) Hz · \(format.channelCount) channel\(format.channelCount == 1 ? "" : "s")")
         onListeningChanged?(true)
+        onLifecycleEvent?("Audio engine started")
     }
 
-    func stop() {
+    func stop(reason: String = "Stopped by user") {
         silenceTask?.cancel()
         silenceTask = nil
+
+        // Invalidate recognition callbacks before touching any shared audio object.
         sessionID = UUID()
         latestPartial = ""
+        onLifecycleEvent?("Stopping session: \(reason)")
 
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest?.endAudio()
-        recognitionRequest = nil
+        let engine = audioEngine
+        let task = recognitionTask
+        let gate = requestGate
 
-        if let engine = audioEngine {
+        // First prevent the tap from scheduling new buffers, then stop the engine.
+        if let engine {
             if inputTapInstalled {
                 engine.inputNode.removeTap(onBus: 0)
                 inputTapInstalled = false
+                onLifecycleEvent?("Microphone tap removed")
             }
-            if engine.isRunning { engine.stop() }
-            engine.reset()
+            if engine.isRunning {
+                engine.stop()
+                onLifecycleEvent?("Audio engine stopped")
+            }
         }
+
+        // Wait for any buffer already inside append(), detach the request, and only
+        // then mark its audio stream as finished. This closes the crash race.
+        let detachedRequest = gate?.detachRequest() ?? recognitionRequest
+        requestGate = nil
+        recognitionRequest = nil
+        detachedRequest?.endAudio()
+
+        recognitionTask = nil
+        task?.cancel()
+
+        engine?.reset()
         audioEngine = nil
         onListeningChanged?(false)
+        onLifecycleEvent?("Session stopped cleanly")
     }
 
     private func receive(transcript: String, isFinal: Bool, sessionID: UUID) {
@@ -160,7 +216,7 @@ final class SpeechController {
         }
 
         silenceTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(1_250))
+            try? await Task.sleep(for: .milliseconds(1_500))
             guard let self, !Task.isCancelled, self.sessionID == sessionID, !self.latestPartial.isEmpty else { return }
             self.finalize(self.latestPartial, sessionID: sessionID)
         }
@@ -169,13 +225,13 @@ final class SpeechController {
     private func finalize(_ transcript: String, sessionID: UUID) {
         guard self.sessionID == sessionID else { return }
         let finalText = transcript
-        stop()
+        stop(reason: "Transcript finalized")
         onFinalTranscript?(finalText)
     }
 
     private func finishWithFailure(_ message: String, sessionID: UUID) {
         guard self.sessionID == sessionID else { return }
-        stop()
+        stop(reason: "Recognition failure")
         onFailure?(message)
     }
 
