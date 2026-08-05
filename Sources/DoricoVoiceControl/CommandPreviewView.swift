@@ -51,7 +51,7 @@ private struct CommandRow: View {
             Spacer()
             Text("\(Int(command.confidence * 100))%")
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(command.confidence >= 0.82 ? .secondary : .orange)
+                .foregroundColor(command.confidence >= 0.82 ? Color.secondary : Color.orange)
         }
     }
 }
