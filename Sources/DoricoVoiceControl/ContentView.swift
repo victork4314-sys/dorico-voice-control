@@ -1,5 +1,6 @@
 #if os(macOS)
 import SwiftUI
+import DoricoVoiceCore
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
