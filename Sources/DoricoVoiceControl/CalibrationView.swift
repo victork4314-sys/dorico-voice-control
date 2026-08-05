@@ -1,5 +1,6 @@
 #if os(macOS)
 import SwiftUI
+import DoricoVoiceCore
 
 struct CalibrationView: View {
     @ObservedObject var model: AppModel
