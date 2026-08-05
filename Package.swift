@@ -9,12 +9,7 @@ let package = Package(
         .executable(name: "DoricoVoiceControl", targets: ["DoricoVoiceControl"])
     ],
     targets: [
-        .target(
-            name: "DoricoVoiceCore",
-            swiftSettings: [
-                .unsafeFlags(["-Xfrontend", "-solver-expression-time-threshold=60"])
-            ]
-        ),
+        .target(name: "DoricoVoiceCore"),
         .executableTarget(name: "DoricoVoiceControl", dependencies: ["DoricoVoiceCore"]),
         .testTarget(name: "DoricoVoiceCoreTests", dependencies: ["DoricoVoiceCore"])
     ]
