@@ -9,7 +9,7 @@ let package = Package(
         .executable(name: "DoricoVoiceControl", targets: ["DoricoVoiceControl"])
     ],
     targets: [
-        .target(name: "DoricoVoiceCore"),
+        .target(name: "DoricoVoiceCore", exclude: ["DoricoVoiceLanguage.swift"]),
         .executableTarget(name: "DoricoVoiceControl", dependencies: ["DoricoVoiceCore"]),
         .testTarget(name: "DoricoVoiceCoreTests", dependencies: ["DoricoVoiceCore"])
     ]
