@@ -128,47 +128,7 @@ struct ContentView: View {
     }
 
     private var previewCard: some View {
-        GroupBox("Command preview") {
-            VStack(alignment: .leading, spacing: 12) {
-                if model.currentBatch.commands.isEmpty {
-                    Text("Nothing is queued.").foregroundStyle(.secondary)
-                } else {
-                    ForEach(Array(model.currentBatch.commands.enumerated()), id: \.element.id) { index, command in
-                        HStack(alignment: .firstTextBaseline) {
-                            Text("\(index + 1)").monospacedDigit().foregroundStyle(.secondary)
-                            Text(command.label)
-                            Spacer()
-                            Text("\(Int(command.confidence * 100))%")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(command.confidence >= 0.82 ? .secondary : .orange)
-                        }
-                        if index < model.currentBatch.commands.count - 1 { Divider() }
-                    }
-                }
-
-                if !model.currentBatch.unrecognizedSegments.isEmpty {
-                    Label("Unrecognized: \(model.currentBatch.unrecognizedSegments.joined(separator: ", "))", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                }
-                if let error = model.planError {
-                    Label(error, systemImage: "hand.raised.fill")
-                        .foregroundStyle(.red)
-                }
-
-                HStack {
-                    Button("Run in Dorico") { model.runPreview() }
-                        .disabled(!model.canRunPreview || model.phase == .executing)
-                        .keyboardShortcut(.return, modifiers: [.command])
-                    Button("Clear") { model.clearPreview() }
-                        .disabled(model.currentBatch.isEmpty && model.partialTranscript.isEmpty)
-                    Spacer()
-                    Text("Commands are sent only to a running Dorico application.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.vertical, 4)
-        }
+        CommandPreviewView(model: model)
     }
 
     private var footerActions: some View {
