@@ -25,8 +25,7 @@ final class DoricoCommandExecutor {
     var isAccessibilityGranted: Bool { AXIsProcessTrusted() }
 
     func requestAccessibilityPermission() {
-        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let options = [promptKey: true] as CFDictionary
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
     }
 
