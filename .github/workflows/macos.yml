@@ -14,8 +14,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Swift version
-        run: swift --version
+      - name: Select newest stable Xcode
+        run: bash scripts/select-latest-xcode.sh
       - name: Verify source safety rails
         run: bash scripts/verify-source-safety.sh
       - name: Test core and compile native app
