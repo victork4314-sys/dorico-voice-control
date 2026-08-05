@@ -4,6 +4,7 @@ import AVFoundation
 import Combine
 import Speech
 import Foundation
+import DoricoVoiceCore
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -224,7 +225,7 @@ final class AppModel: ObservableObject {
             statusMessage = "Sending \(plan.commands.count) command\(plan.commands.count == 1 ? "" : "s") to Dorico…"
             try await executor.execute(plan)
             phase = .idle
-            statusMessage = "Sent: \(plan.commands.map(\.label).joined(separator: " → "))"
+            statusMessage = "Sent: \(plan.commands.map { $0.label }.joined(separator: " → "))"
             log("Execution", statusMessage)
         } catch {
             phase = .failed
